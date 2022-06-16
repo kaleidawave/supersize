@@ -1,0 +1,93 @@
+name: Crates and GitHub release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "major/minor/patch or semver"
+        required: true
+        default: "patch"
+      release_notes:
+        description: "Release notes"
+        required: true
+        default: ""
+
+jobs:
+  crates-release:
+    runs-on: ubuntu-latest
+
+    outputs:
+      new_version: ${{ steps.crates-release.outputs.new-version }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set git credentials
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+      - name: Crates publish
+        uses: kaleidawave/crates-release-gh-action@main
+        id: crates-release
+        with:
+          version: ${{ github.event.inputs.version }}
+          crates-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Push updated Cargo.toml
+        run: |
+          git tag "v${{ steps.crates-release.outputs.new-version }}"
+          git add .
+          git commit -m "Release: ${{ steps.crates-release.outputs.new-version }}"
+          git push --tags origin main
+
+  builds:
+    needs: crates-release
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: windows-latest
+            executable-extension: .exe
+            platform_name: x86_64-pc-windows
+          - os: ubuntu-latest
+            platform_name: x86_64-unknown-linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Build binary
+        run: cargo build --release
+      - name: Rename and move release assets
+        run: |
+          mkdir artifacts
+          current="supersize/target/release/supersize${{ matrix.executable-extension }}"
+          new="artifacts/supersize-${{ needs.crates-release.outputs.new_version }}-${{ matrix.platform_name }}${{ matrix.executable-extension }}"
+          mv $current $new
+      - uses: actions/upload-artifact@v3
+        with:
+          name: builds
+          path: artifacts/*
+
+  github-release:
+    needs: [builds, crates-release]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/download-artifact@v3
+      with:
+        name: builds
+        path: builds
+    - name: GitHub release
+      id: github-release
+      uses: softprops/action-gh-release@v1
+      with:
+        body: ${{ github.event.inputs.release_notes }}
+        tag_name: "v${{ needs.crates-release.outputs.new_version }}"
+        files: builds/*
+    - name: Discord
+      uses: rjstone/discord-webhook-notify@v1
+      with:
+        severity: info
+        text: "Released version ${{ needs.crates-release.outputs.new_version }}, ${{ steps.github-release.outputs.url }}"
+        webhookUrl: ${{ secrets.DISCORD_WEBHOOK_ENDPOINT }}
+    
