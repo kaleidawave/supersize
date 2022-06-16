@@ -89,7 +89,7 @@ async fn main() {
     if let Some(first_path) = paths.next() {
         let first_path_name = first_path.path();
         let first_path_size = first_path.total_size().uncompressed;
-        
+
         println!(
             "\n{} {} {}",
             "Smallest:".bold(),
